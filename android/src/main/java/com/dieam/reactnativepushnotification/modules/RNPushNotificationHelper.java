@@ -1,6 +1,5 @@
 package com.dieam.reactnativepushnotification.modules;
 
-
 import android.app.AlarmManager;
 import android.app.Application;
 import android.app.Notification;
@@ -21,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
+import android.media.AudioAttributes;
 
 import com.facebook.react.bridge.ReadableMap;
 
@@ -37,7 +37,12 @@ import static com.dieam.reactnativepushnotification.modules.RNPushNotificationAt
 public class RNPushNotificationHelper {
     public static final String PREFERENCES_KEY = "rn_push_notification";
     private static final long DEFAULT_VIBRATION = 300L;
-    private static final String NOTIFICATION_CHANNEL_ID = "rn-push-notification-channel-id";
+
+    private static final String NOTIFICATION_CHANNEL_ID = "NCare-Reminder-id";
+    private static String NOTIFICATION_CHANNEL_ID_TMP = null;
+
+    private static final CharSequence NOTIFICATION_CHANNEL_NAME = "NCare-Reminder";
+    private static CharSequence NOTIFICATION_CHANNEL_NAME_TMP = null;
 
     private Context context;
     private final SharedPreferences scheduledNotificationsPersistence;
@@ -47,7 +52,8 @@ public class RNPushNotificationHelper {
 
     public RNPushNotificationHelper(Application context) {
         this.context = context;
-        this.scheduledNotificationsPersistence = context.getSharedPreferences(RNPushNotificationHelper.PREFERENCES_KEY, Context.MODE_PRIVATE);
+        this.scheduledNotificationsPersistence = context.getSharedPreferences(RNPushNotificationHelper.PREFERENCES_KEY,
+                Context.MODE_PRIVATE);
     }
 
     public Class getMainActivityClass() {
@@ -73,7 +79,8 @@ public class RNPushNotificationHelper {
         notificationIntent.putExtra(RNPushNotificationPublisher.NOTIFICATION_ID, notificationID);
         notificationIntent.putExtras(bundle);
 
-        return PendingIntent.getBroadcast(context, notificationID, notificationIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        return PendingIntent.getBroadcast(context, notificationID, notificationIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     public void sendNotificationScheduled(Bundle bundle) {
@@ -123,8 +130,8 @@ public class RNPushNotificationHelper {
         // notification to the user
         PendingIntent pendingIntent = toScheduleNotificationIntent(bundle);
 
-        Log.d(LOG_TAG, String.format("Setting a notification with id %s at time %s",
-                bundle.getString("id"), Long.toString(fireDate)));
+        Log.d(LOG_TAG, String.format("Setting a notification with id %s at time %s", bundle.getString("id"),
+                Long.toString(fireDate)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             getAlarmManager().setExact(AlarmManager.RTC_WAKEUP, fireDate, pendingIntent);
         } else {
@@ -141,7 +148,8 @@ public class RNPushNotificationHelper {
             }
 
             if (bundle.getString("message") == null) {
-                // this happens when a 'data' notification is received - we do not synthesize a local notification in this case
+                // this happens when a 'data' notification is received - we do not synthesize a
+                // local notification in this case
                 Log.d(LOG_TAG, "Cannot send to notification centre because there is no 'message' field in: " + bundle);
                 return;
             }
@@ -161,13 +169,20 @@ public class RNPushNotificationHelper {
                 title = context.getPackageManager().getApplicationLabel(appInfo).toString();
             }
 
-            NotificationCompat.Builder notification = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-                    .setContentTitle(title)
-                    .setTicker(bundle.getString("ticker"))
-                    .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setAutoCancel(bundle.getBoolean("autoCancel", true));
+            NOTIFICATION_CHANNEL_ID_TMP = "" + NOTIFICATION_CHANNEL_ID;
+            NOTIFICATION_CHANNEL_NAME_TMP = "" + NOTIFICATION_CHANNEL_NAME;
 
+            NotificationCompat.Builder notification = new NotificationCompat.Builder(context,NOTIFICATION_CHANNEL_ID_TMP)
+                            .setContentTitle(title)
+                            .setTicker(bundle.getString("ticker"))
+                            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setAutoCancel(bundle.getBoolean("autoCancel", true));
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // API 26 and higher
+                // Changing Default mode of notification
+                notification.setDefaults(Notification.DEFAULT_LIGHTS);
+            }
             String group = bundle.getString("group");
             if (group != null) {
                 notification.setGroup(group);
@@ -233,8 +248,9 @@ public class RNPushNotificationHelper {
             bundle.putBoolean("userInteraction", true);
             intent.putExtra("notification", bundle);
 
+            Uri soundUri = null;
             if (!bundle.containsKey("playSound") || bundle.getBoolean("playSound")) {
-                Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
                 String soundName = bundle.getString("soundName");
                 if (soundName != null) {
                     if (!"default".equalsIgnoreCase(soundName)) {
@@ -252,9 +268,22 @@ public class RNPushNotificationHelper {
                         }
 
                         soundUri = Uri.parse("android.resource://" + context.getPackageName() + "/" + resId);
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // API 26 and higher
+                            NOTIFICATION_CHANNEL_ID_TMP = NOTIFICATION_CHANNEL_ID + "-" + soundName;
+                            notification.setChannelId(NOTIFICATION_CHANNEL_ID_TMP);
+
+                            String channelName = bundle.getString("channelName");
+                            if (channelName != null) {
+                                NOTIFICATION_CHANNEL_NAME_TMP = "" + channelName;
+                            }
+                        }
                     }
                 }
                 notification.setSound(soundUri);
+            }
+            if (soundUri == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                notification.setSound(null);
             }
 
             if (bundle.containsKey("ongoing") || bundle.getBoolean("ongoing")) {
@@ -276,15 +305,16 @@ public class RNPushNotificationHelper {
                     PendingIntent.FLAG_UPDATE_CURRENT);
 
             NotificationManager notificationManager = notificationManager();
-            checkOrCreateChannel(notificationManager);
+            checkOrCreateChannel(notificationManager, soundUri);
 
             notification.setContentIntent(pendingIntent);
 
             if (!bundle.containsKey("vibrate") || bundle.getBoolean("vibrate")) {
-                long vibration = bundle.containsKey("vibration") ? (long) bundle.getDouble("vibration") : DEFAULT_VIBRATION;
+                long vibration = bundle.containsKey("vibration") ? (long) bundle.getDouble("vibration")
+                        : DEFAULT_VIBRATION;
                 if (vibration == 0)
                     vibration = DEFAULT_VIBRATION;
-                notification.setVibrate(new long[]{0, vibration});
+                notification.setVibrate(new long[] { 0, vibration });
             }
 
             Serializable actionsRaw = bundle.getSerializable("actions");
@@ -303,8 +333,8 @@ public class RNPushNotificationHelper {
                     // Add "action" for later identifying which button gets pressed.
                     bundle.putString("action", id);
                     actionIntent.putExtra("notification", bundle);
-                    PendingIntent pendingActionIntent = PendingIntent.getBroadcast(context, notificationID, actionIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT);
+                    PendingIntent pendingActionIntent = PendingIntent.getBroadcast(context, notificationID,
+                            actionIntent, PendingIntent.FLAG_UPDATE_CURRENT);
                     notification.addAction(icon, text, pendingActionIntent);
                 }
             }
@@ -312,10 +342,13 @@ public class RNPushNotificationHelper {
             // Remove the notification from the shared preferences once it has been shown
             // to avoid showing the notification again when the phone is rebooted. If the
             // notification is not removed, then every time the phone is rebooted, we will
-            // try to reschedule all the notifications stored in shared preferences and since
+            // try to reschedule all the notifications stored in shared preferences and
+            // since
             // these notifications will be in the past time, they will be shown immediately
-            // to the user which we shouldn't do. So, remove the notification from the shared
-            // preferences once it has been shown to the user. If it is a repeating notification
+            // to the user which we shouldn't do. So, remove the notification from the
+            // shared
+            // preferences once it has been shown to the user. If it is a repeating
+            // notification
             // it will be scheduled again.
             if (scheduledNotificationsPersistence.getString(notificationIdString, null) != null) {
                 SharedPreferences.Editor editor = scheduledNotificationsPersistence.edit();
@@ -359,35 +392,34 @@ public class RNPushNotificationHelper {
             }
 
             if ("time".equals(repeatType) && repeatTime <= 0) {
-                Log.w(LOG_TAG, "repeatType specified as time but no repeatTime " +
-                        "has been mentioned");
+                Log.w(LOG_TAG, "repeatType specified as time but no repeatTime " + "has been mentioned");
                 return;
             }
 
             long newFireDate = 0;
 
             switch (repeatType) {
-                case "time":
-                    newFireDate = fireDate + repeatTime;
-                    break;
-                case "week":
-                    newFireDate = fireDate + 7 * ONE_DAY;
-                    break;
-                case "day":
-                    newFireDate = fireDate + ONE_DAY;
-                    break;
-                case "hour":
-                    newFireDate = fireDate + ONE_HOUR;
-                    break;
-                case "minute":
-                    newFireDate = fireDate + ONE_MINUTE;
-                    break;
+            case "time":
+                newFireDate = fireDate + repeatTime;
+                break;
+            case "week":
+                newFireDate = fireDate + 7 * ONE_DAY;
+                break;
+            case "day":
+                newFireDate = fireDate + ONE_DAY;
+                break;
+            case "hour":
+                newFireDate = fireDate + ONE_HOUR;
+                break;
+            case "minute":
+                newFireDate = fireDate + ONE_MINUTE;
+                break;
             }
 
             // Sanity check, should never happen
             if (newFireDate != 0) {
-                Log.d(LOG_TAG, String.format("Repeating notification with id %s at time %s",
-                        bundle.getString("id"), Long.toString(newFireDate)));
+                Log.d(LOG_TAG, String.format("Repeating notification with id %s at time %s", bundle.getString("id"),
+                        Long.toString(newFireDate)));
                 bundle.putDouble("fireDate", newFireDate);
                 this.sendNotificationScheduled(bundle);
             }
@@ -460,22 +492,30 @@ public class RNPushNotificationHelper {
         }
     }
 
-    private static boolean channelCreated = false;
-    private static void checkOrCreateChannel(NotificationManager manager) {
+    private static void checkOrCreateChannel(NotificationManager manager, Uri soundUri) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
-            return;
-        if (channelCreated)
             return;
         if (manager == null)
             return;
 
-        final CharSequence name = "rn-push-notification-channel";
-        int importance = NotificationManager.IMPORTANCE_DEFAULT;
-        NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance);
-        channel.enableLights(true);
-        channel.enableVibration(true);
-
+        NotificationChannel channel = manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID_TMP);
+        if (channel == null) {
+            channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID_TMP, NOTIFICATION_CHANNEL_NAME_TMP,NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Notification Channel for NCare Reminder");
+            channel.enableLights(true);
+            channel.enableVibration(true); // ??? test when Alarm='none'
+            Log.v("ReactNative", "From Ahsan here" + soundUri.toString());
+            if (soundUri != null) {
+                AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build();
+                channel.setSound(soundUri, audioAttributes);
+            } else {
+                channel.setSound(null, null);
+            }
+        }
         manager.createNotificationChannel(channel);
-        channelCreated = true;
+        return;
     }
 }
